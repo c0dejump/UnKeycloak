@@ -6,11 +6,12 @@ from urllib.parse import urljoin
 requests.packages.urllib3.disable_warnings()
 
 class GetVersion:
-    def __init__(self, url_realm):
+    def __init__(self, url_realm, session=None):
         self.realm_url = url_realm.rstrip('/') + '/'
         self.base_url = self._extract_base_url(url_realm)
         self.data = {}
         self.version_indicators = []
+        self._session = session
 
     def _extract_base_url(self, url):
         if '/realms/' in url:
@@ -21,8 +22,10 @@ class GetVersion:
 
     def fetch(self, url, allow_redirects=True):
         try:
+            if self._session:
+                return self._session.get(url, verify=False, allow_redirects=allow_redirects)
             return requests.get(url, verify=False, timeout=8, allow_redirects=allow_redirects)
-        except:
+        except Exception:
             return None
 
     def check_openid_config(self):
@@ -133,9 +136,18 @@ class GetVersion:
         if "undertow" in server or "wildfly" in server:
             self.version_indicators.append(("16.1.1", False))
 
+    def _is_plausible(self, v: str) -> bool:
+        """Keycloak public releases start at 1.0.0.Final — discard 0.x.x matches."""
+        try:
+            major = int(v.split('.')[0])
+            return 1 <= major <= 35
+        except Exception:
+            return False
+
     def calculate_version(self):
         if 'exact_version' in self.data:
-            return self.data['exact_version']
+            v = self.data['exact_version']
+            return v if self._is_plausible(v) else None
 
         def ver_tuple(v):
             return tuple(int(p) for p in v.split('.'))
@@ -157,25 +169,29 @@ class GetVersion:
         
         return None
 
+    def _get_exact(self):
+        v = self.data.get('exact_version')
+        return v if v and self._is_plausible(v) else None
+
     def run(self):
         self.check_admin_version()
-        if 'exact_version' in self.data:
-            return self.data['exact_version']
-        
+        if self._get_exact():
+            return self._get_exact()
+
         self.check_js_resources()
-        if 'exact_version' in self.data:
-            return self.data['exact_version']
-        
+        if self._get_exact():
+            return self._get_exact()
+
         self.check_theme_resources()
-        if 'exact_version' in self.data:
-            return self.data['exact_version']
-        
+        if self._get_exact():
+            return self._get_exact()
+
         self.check_welcome_page()
-        if 'exact_version' in self.data:
-            return self.data['exact_version']
+        if self._get_exact():
+            return self._get_exact()
 
         self.check_headers()
         self.check_openid_config()
         self.detect_features()
-        
+
         return self.calculate_version()

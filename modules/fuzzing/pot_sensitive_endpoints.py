@@ -6,7 +6,72 @@ from utils.utils import (
     time,
     args
 )
-from utils.style import Colors
+from utils.style import Colors, Identify
+import json as _json
+
+
+def _analyze_sensitive_response(url_e, req, reporter):
+    """Extract notable data from 200 responses on sensitive endpoints."""
+    ct = req.headers.get("Content-Type", "")
+
+    # clients-registrations/install/* → may contain client secret or sensitive config
+    if "clients-registrations/install" in url_e and "application/json" in ct:
+        try:
+            data = req.json()
+            secret = data.get("secret") or data.get("credentials", {}).get("secret")
+            if secret:
+                print(f"       {Identify.confirmed}")
+                print(f"       Client SECRET exposed: {secret}")
+                if reporter:
+                    reporter.add("SensitiveEndpoint", "critical",
+                                 f"Client secret exposed at {url_e}", url_e, f"secret={secret}")
+            else:
+                # Show interesting fields
+                interesting = {k: v for k, v in data.items()
+                               if k in ("clientId", "rootUrl", "redirectUris", "webOrigins",
+                                        "publicClient", "bearerOnly", "standardFlowEnabled",
+                                        "implicitFlowEnabled", "directAccessGrantsEnabled")}
+                if interesting:
+                    print(f"       {Colors.THISTLE}Config:{Colors.RESET} "
+                          f"{_json.dumps(interesting, separators=(',', ':'))[:200]}")
+                    if interesting.get("implicitFlowEnabled"):
+                        print(f"       {Identify.behavior}")
+                        print(f"       implicitFlowEnabled=true on this client")
+                        if reporter:
+                            reporter.add("SensitiveEndpoint", "medium",
+                                         "Client config: implicit flow enabled", url_e)
+                    if interesting.get("directAccessGrantsEnabled"):
+                        print(f"       {Colors.YELLOW}[i] directAccessGrantsEnabled=true "
+                              f"(ROPC/brute-force surface){Colors.RESET}")
+        except Exception:
+            pass
+
+    # admin serverinfo → version leak
+    elif "serverinfo" in url_e and "application/json" in ct:
+        try:
+            data = req.json()
+            version = data.get("systemInfo", {}).get("version")
+            if version:
+                print(f"       {Identify.confirmed}")
+                print(f"       Serverinfo accessible without auth — version: {version}")
+                if reporter:
+                    reporter.add("SensitiveEndpoint", "high",
+                                 f"Serverinfo exposed (version {version})", url_e)
+        except Exception:
+            pass
+
+    # admin realms/users → user list
+    elif "/admin/" in url_e and ("users" in url_e or "groups" in url_e or "clients" in url_e):
+        try:
+            data = req.json()
+            if isinstance(data, list) and data:
+                print(f"       {Identify.confirmed}")
+                print(f"       Admin API accessible without auth — {len(data)} item(s) returned")
+                if reporter:
+                    reporter.add("SensitiveEndpoint", "critical",
+                                 f"Admin API accessible without auth", url_e)
+        except Exception:
+            pass
 
 
 def sensitive_endpoints(url, s, realms, vci):
@@ -213,10 +278,16 @@ def sensitive_endpoints(url, s, realms, vci):
         for r in realms:
             r = r.split("/")[-1]
             endpoints_.append(f"realms/{r}/clients-registrations/install/{v}")
-    #print(endpoints_)
+    from utils.style import Identify
+    from utils.output import get_reporter
+    reporter = get_reporter()
+
     for e in endpoints_:
         url_e = f"{url}{e}"
-        #print(url_e)
-        req_s = s.get(url_e, allow_redirects=False)
+        try:
+            req_s = s.get(url_e, allow_redirects=False)
+        except Exception:
+            continue
         if req_s.status_code not in [403, 401, 404, 400, 405, 301, 302, 503]:
             print(f"  └── [{req_s.status_code}] {url_e}")
+            _analyze_sensitive_response(url_e, req_s, reporter)

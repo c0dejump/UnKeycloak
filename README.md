@@ -50,6 +50,7 @@ Follow these steps to install **UnKeycloak**:
 ```bash
 usage: unkeycloak.py [-h] [-u URL] [-f URL_FILE] [-o OUTPUT] [-v] [-H CUSTOM_HEADER] [-r CUSTOM_REALMS] [-x PROXY]
                      [-t TIMEOUT] [--no-brute] [--no-enum] [-w WORDLIST] [--rate-limit RATE_LIMIT]
+                     [--reset-user RESET_USER] [--no-reset-test]
 
 options:
   -h, --help            show this help message and exit
@@ -79,6 +80,13 @@ options:
                         Custom credential wordlist (user:pass per line)
   --rate-limit RATE_LIMIT
                         Delay between brute-force requests in seconds (default: 0.1)
+
+> CVE-2026-18963 (reset-credentials bypass):
+  --reset-user RESET_USER
+                        Username(s) to actively test for the unauth reset-credentials
+                        bypass (repeatable). Enumerated valid users are also tested.
+  --no-reset-test       Skip the active CVE-2026-18963 test (it sends a password-reset
+                        email to each tested user)
 ```
 
 ### Arguments
@@ -120,6 +128,7 @@ options:
 
 ### Misconfigurations
 - CVE checking against the detected version (~30 CVEs, from 2018 to 2026), with active PoC where it is safe to do so — destructive CVEs and those requiring a valid bearer token are reported for manual testing only
+- CVE-2026-18963 active unauthenticated reset-credentials bypass test: drives the reset flow via *Try Another Way* → email selection → `username`, then re-requests the reset URL to detect the update-password form served **without** consuming the email action-token (account takeover on Keycloak 26.0.0–26.7.1). Non-destructive — it never sets a new password — but it does send one reset email per tested user. Targets are enumerated valid users plus any `--reset-user` you pass; disable with `--no-reset-test`.
 - Self-registration endpoints exposed
 - Dynamic client registration open to anonymous users
 - PAR (Pushed Authorization Requests) misconfiguration
@@ -133,8 +142,12 @@ options:
 
 ### Fuzzing
 - Potentially sensitive endpoints (client-registration installs leaking secrets, config exposure...)
-- User enumeration (response differential + timing analysis)
-- Default / weak credential testing on the token endpoint (`--no-brute` to skip, `-w` for a custom wordlist)
+- User enumeration — multiple oracles, most-to-least reliable:
+  - **Admin Users API dump** (`/admin/realms/{realm}/users`): the only vector that actually *lists* users instead of guessing. Tried unauthenticated first (a broken reverse-proxy exposing it is flagged critical), then dumped (paginated) with any access token recovered by the credential module — an `admin-cli` token on `master` lists every realm's users.
+  - **Self-registration oracle**: when registration is open, submits the form with a target username and mismatched passwords (so no account is ever created) and reads Keycloak's *"Username already exists"* response.
+  - **Token endpoint response differential** (valid vs invalid account messages) + **timing analysis** (bcrypt comparison on valid users).
+  - All confirmed users feed the CVE-2026-18963 reset-credentials test automatically.
+- Default / weak credential testing on the token endpoint (`--no-brute` to skip, `-w` for a custom wordlist); a recovered access token is reused to enumerate real users via the Admin API
 
 ### Reporting
 - Colored terminal summary grouped by severity (critical → info)

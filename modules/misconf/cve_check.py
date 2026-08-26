@@ -348,6 +348,26 @@ _CVE_DB = {
         ),
         "poc": None,
     },
+    "CVE-2026-18963": {
+        # Fixed across branches: 26.7.2 (mainline), 26.6.6, 26.4.15.
+        # Affected range 26.0.0–26.7.1; simple version compare uses the mainline fix.
+        "fixed": "26.7.2",
+        "severity": "critical",
+        "cvss": 9.8,
+        "name": "Reset-credentials flow bypass → unauthenticated account takeover",
+        "desc": (
+            "ResetCredentialEmail.action() succeeded unconditionally. Driving the reset flow via "
+            "'Try Another Way' reaches UPDATE_PASSWORD without consuming the email action-token → "
+            "an unauthenticated attacker who knows a username sets a new password. Actively tested "
+            "by the reset-credentials bypass module (--reset-user)."
+        ),
+        "poc": (
+            "# Active unauth test (sends a reset email, never sets a password):\n"
+            "python3 unkeycloak.py -u {base} --reset-user VICTIM_USERNAME\n"
+            "# Manual: on {base}/realms/{realm}/login-actions/reset-credentials POST "
+            "tryAnotherWay=on -> select email + username -> GET reset URL -> update-password form"
+        ),
+    },
 }
 
 # CVEs where the active test could harm real users or cause an outage — skip
@@ -366,6 +386,7 @@ _NEEDS_TOKEN = {
     "CVE-2025-14559",  # valid bearer token required
     "CVE-2025-13467",  # realm-admin token required
     "CVE-2025-12390",  # multi-session browser scenario required
+    # CVE-2026-18963 is actively tested by modules/misconf/reset_creds_bypass.py
 }
 
 

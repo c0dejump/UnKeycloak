@@ -41,6 +41,7 @@ def direct_access_grant_bf(s, realms, client_ids, rate_limit=0.1):
         "dag_enabled": [],
         "credentials": [],
         "user_info": [],
+        "tokens": [],  # (label, access_token) for authenticated follow-ups (user dump...)
     }
 
     for realm in realms:
@@ -96,6 +97,15 @@ def direct_access_grant_bf(s, realms, client_ids, rate_limit=0.1):
                         "realm": realm, "client": client_id,
                         "user": user, "pass": password,
                     })
+                    access_token = ""
+                    try:
+                        access_token = req.json().get("access_token", "") or ""
+                    except Exception:
+                        access_token = ""
+                    if access_token:
+                        results["tokens"].append(
+                            (f"{user}@{client_id}", access_token)
+                        )
                     print(f"      {Colors.RED}[!!!] Valid credentials: {user}:{password} @ {client_id}{Colors.RESET}")
                     if reporter:
                         reporter.add(
@@ -124,4 +134,4 @@ def direct_access_grant_bf(s, realms, client_ids, rate_limit=0.1):
 def bf_credz(url, s, realms, client_ids):
     print(f"{Colors.CYAN} ├ Credentials Analysis {Colors.RESET}")
     rate_limit = getattr(args, "rate_limit", 0.1)
-    direct_access_grant_bf(s, realms, client_ids, rate_limit=rate_limit)
+    return direct_access_grant_bf(s, realms, client_ids, rate_limit=rate_limit)

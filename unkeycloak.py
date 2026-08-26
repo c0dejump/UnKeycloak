@@ -27,10 +27,12 @@ from modules.misconf.session_security import check_session_security
 from modules.misconf.client_registration import check_client_registration
 from modules.misconf.scope_enum import check_scopes
 from modules.misconf.cve_check import check_cves
+from modules.misconf.reset_creds_bypass import test_reset_credentials_bypass
 
 from modules.fuzzing.pot_sensitive_endpoints import sensitive_endpoints
 from modules.fuzzing.credz_testing import bf_credz
 from modules.fuzzing.users_enumeration import user_enum
+from modules.fuzzing.admin_users import dump_users
 
 from static.banner import print_banner
 
@@ -122,8 +124,19 @@ def process_modules(url, s, reporter, show_summary=True):
         if not args.no_enum:
             user_enum(s, realms, client_ids)
 
+        bf_results = None
         if not args.no_brute:
-            bf_credz(url, s, realms, client_ids)
+            bf_results = bf_credz(url, s, realms, client_ids)
+
+        # List real users via the Admin REST API (unauthenticated attempt +
+        # any access token recovered by the credential module) instead of only
+        # fuzzing a wordlist. Discovered users feed the reset-credentials test.
+        tokens = bf_results.get("tokens") if bf_results else []
+        dump_users(s, realms, tokens=tokens)
+
+        # CVE-2026-18963: active unauthenticated reset-credentials bypass test
+        # (runs last so both enumerated and dumped usernames can be reused)
+        test_reset_credentials_bypass(s, realms, client_ids, version=version)
 
         _correlate_findings(reporter)
 
